@@ -139,17 +139,24 @@ class MultiAgentEnv(gym.Env, ABC):
 
     def _get_actions(self, players, obs, ego_act=None):
         actions = []
+        partner_influence_rew = 0
         for player, ob in zip(players, obs):
             if player == self.ego_ind:
+                # ego_act = 1
                 actions.append(ego_act)
             else:
                 p = self._get_partner_num(player)
                 agent = self.partners[p][self.partnerids[p]]
-                actions.append(agent.get_action(ob))
+                partner_action = agent.get_action(ob)
+                # print("partner_action", partner_action)
+                if partner_action == 2:
+                    # partner_influence_rew = 100
+                    partner_influence_rew = 0
+                actions.append(partner_action)
                 if not self.should_update[p]:
                     agent.update(self.total_rews[player], False)
                 self.should_update[p] = True
-        return np.array(actions)
+        return np.array(actions), partner_influence_rew
 
     def _update_players(self, rews, done):
         for i in range(self.n_players - 1):
@@ -181,10 +188,16 @@ class MultiAgentEnv(gym.Env, ABC):
             info: Extra information about the environment
         """
         ego_rew = 0.0
-
+        all_actions = []
+        initial_obs = self._obs
         while True:
-            acts = self._get_actions(self._players, self._obs, action)
+            acts, partner_influence_rew = self._get_actions(self._players, self._obs, action)
+            all_actions.append(acts)
+            # print("acts", acts)
+
+
             self._players, self._obs, rews, done, info = self.n_step(acts)
+            # print("taken_actions", taken_actions)
             info['_partnerid'] = self.partnerids
 
             self._update_players(rews, done)
@@ -192,17 +205,28 @@ class MultiAgentEnv(gym.Env, ABC):
             ego_rew += rews[self.ego_ind] if self.ego_moved \
                 else self.total_rews[self.ego_ind]
 
+            ego_rew += partner_influence_rew
+
             self.ego_moved = True
 
             if done:
-                return self._old_ego_obs, ego_rew, done, info
+                ego_obs = self._obs[self._players.index(self.ego_ind)]
+                ego_obs_for_influence = np.concatenate(([ego_obs.item()], [acts[self.ego_ind].item()]), axis=0)
+                return self._old_ego_obs, ego_obs_for_influence, ego_rew, done, info, all_actions
 
             if self.ego_ind in self._players:
                 break
 
+        # ego_obs_of_partner = self._obs[self._players.index(self.ego_ind)]
+        # ego_obs_of_self = self._obs[self.ego_ind]
+
         ego_obs = self._obs[self._players.index(self.ego_ind)]
+        ego_obs_for_influence = np.concatenate(([ego_obs.item()], [acts[self.ego_ind].item()]), axis=0)
+        # print(f"ego_obs_of_partner = {self._players.index(self.ego_ind)}, ego_obs_of_Self = {self.ego_ind}. ego_obs = {ego_obs}, initial_obs = {initial_obs}")
+
         self._old_ego_obs = ego_obs
-        return ego_obs, ego_rew, done, info
+        # print("all_actions", all_actions)
+        return ego_obs, ego_obs_for_influence, ego_rew, done, info, all_actions
 
     def reset(self) -> np.ndarray:
         """
@@ -272,6 +296,7 @@ class MultiAgentEnv(gym.Env, ABC):
             agents: Tuple representing the agents that will move first
             observations: Tuple representing the observations of both agents
         """
+
 
 
 class TurnBasedEnv(MultiAgentEnv, ABC):
@@ -394,6 +419,7 @@ class SimultaneousEnv(MultiAgentEnv, ABC):
 
     def n_reset(self) -> Tuple[Tuple[int, ...],
                                Tuple[Optional[np.ndarray], ...]]:
+        # return (0, 1), self.multi_reset()
         return (0, 1), self.multi_reset()
 
     @abstractmethod

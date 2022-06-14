@@ -72,6 +72,8 @@ def action_from_policy(
 
     : returns: The action, values, and log_probs from the policy
     """
+    # print("observation shape", obs.shape)
+    # print("policy.observation_space.shape", policy.observation_space.shape)
     obs = obs.reshape((-1,) + policy.observation_space.shape)
     with th.no_grad():
         # Convert to pytorch tensor or to TensorDict

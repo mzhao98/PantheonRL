@@ -340,6 +340,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', '-d',
                         default='auto',
                         help='Device to run pytorch on')
+
     parser.add_argument('--seed', '-s',
                         default=None,
                         type=int,
@@ -410,6 +411,9 @@ if __name__ == '__main__':
     learn_config = {'total_timesteps': args.total_timesteps}
     if args.tensorboard_log:
         learn_config['tb_log_name'] = args.tensorboard_name
+
+    print("learn_config", learn_config)
+
     ego.learn(**learn_config)
 
     if args.record:

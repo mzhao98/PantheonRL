@@ -1,3 +1,4 @@
+import pdb
 from typing import Tuple, Optional, List, Dict
 
 import numpy as np
@@ -15,9 +16,14 @@ class PettingZooAECWrapper(MultiAgentEnv):
         self.base_env = base_env
         super(PettingZooAECWrapper, self).__init__(
             ego_ind, base_env.max_num_agents)
+
+        # Set ego agent to be the designated index (default 0)
         ego_agent = base_env.possible_agents[ego_ind]
+
+        # self.action_space = ego agent's action space
         self.action_space = base_env.action_space(ego_agent)
 
+        # self.observation_space = ego agent's obs space
         obs_space = base_env.observation_space(ego_agent)
         if isinstance(obs_space, spaces.Dict):
             obs_space = obs_space.spaces['observation']
@@ -57,15 +63,20 @@ class PettingZooAECWrapper(MultiAgentEnv):
             done: Whether the episode has ended
             info: Extra information about the environment
         """
+        # pdb.set_trace()
         agent = self.base_env.agent_selection
         act = actions[0]
         if self._action_mask is not None and not self._action_mask[act]:
             act = self._action_mask.tolist().index(1)
 
+        # print("act", act)
         self.base_env.step(act)
 
         agent = self.base_env.agent_selection
         agent_idx = self.base_env.possible_agents.index(agent)
+
+        # observation of one agent is the previous state of the other
+        # observe(player 0) gives the previous state of player 1
         obs = self.base_env.observe(agent)
 
         if isinstance(obs, dict):
@@ -73,6 +84,8 @@ class PettingZooAECWrapper(MultiAgentEnv):
             obs = obs['observation']
 
         rewards = [0] * self.n_players
+
+        # print("self.base_env.rewards.items()", self.base_env.rewards.items())
         for key, val in self.base_env.rewards.items():
             rewards[self.base_env.possible_agents.index(key)] = val
 
@@ -103,3 +116,4 @@ class PettingZooAECWrapper(MultiAgentEnv):
 
         self.agent_counts = [0] * self.n_players
         return (agent_idx,), (obs,)
+

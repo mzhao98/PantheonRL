@@ -59,6 +59,7 @@ class StaticPolicyAgent(Agent):
 
     def __init__(self, policy: ActorCriticPolicy):
         self.policy = policy
+        # print("self.policy", self.policy)
 
     def get_action(self, obs: np.ndarray, record: bool = True) -> np.ndarray:
         """
@@ -68,7 +69,13 @@ class StaticPolicyAgent(Agent):
         :param record: Whether to record the obs, action (unused)
         :returns: The action to take
         """
-        actions, _, _ = action_from_policy(obs, self.policy)
+        number_to_action = {0: 'Rock', 1: 'Paper', 2: 'Scissors', 3: 'None'}
+
+        actions, values, log_probs = action_from_policy(obs, self.policy)
+
+        # print(f"ego agent actions: {number_to_action[actions[0]]}, given obs {number_to_action[obs.item()]}")
+        # print(f"ego agent values: {values}, given obs {number_to_action[obs.item()]}")
+        # print(f"ego agent log_probs: {log_probs}, given obs {number_to_action[obs.item()]}")
         return clip_actions(actions, self.policy)[0]
 
     def update(self, reward: float, done: bool) -> None:
@@ -138,6 +145,7 @@ class OnPolicyAgent(Agent):
                         len(self.model.ep_info_buffer[0]) > 0:
                     last_exclude = self.model.ep_info_buffer.pop()
                     rews = [ep["r"] for ep in self.model.ep_info_buffer]
+                    # print("rews", rews)
                     lens = [ep["l"] for ep in self.model.ep_info_buffer]
                     self.model.logger.record(
                         "rollout/ep_rew_mean", safe_mean(rews))
@@ -179,6 +187,7 @@ class OnPolicyAgent(Agent):
         self.n_steps += 1
         self.num_timesteps += 1
         self.values = values
+        # print("values", self.values)
         return clip_actions(actions, self.model)[0]
 
     def update(self, reward: float, done: bool) -> None:
