@@ -1,3 +1,4 @@
+import pdb
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
@@ -140,6 +141,7 @@ class MultiAgentEnv(gym.Env, ABC):
     def _get_actions(self, players, obs, ego_act=None):
         actions = []
         partner_influence_rew = 0
+        partner_action_distribution = None
         for player, ob in zip(players, obs):
             if player == self.ego_ind:
                 # ego_act = 1
@@ -147,16 +149,16 @@ class MultiAgentEnv(gym.Env, ABC):
             else:
                 p = self._get_partner_num(player)
                 agent = self.partners[p][self.partnerids[p]]
-                partner_action = agent.get_action(ob)
+                partner_action, partner_action_distribution = agent.get_action(ob)
                 # print("partner_action", partner_action)
-                if partner_action == 2:
+                # if partner_action == 2:
                     # partner_influence_rew = 100
-                    partner_influence_rew = 0
+                    # partner_influence_rew = 0
                 actions.append(partner_action)
                 if not self.should_update[p]:
                     agent.update(self.total_rews[player], False)
                 self.should_update[p] = True
-        return np.array(actions), partner_influence_rew
+        return np.array(actions), partner_influence_rew, partner_action_distribution
 
     def _update_players(self, rews, done):
         for i in range(self.n_players - 1):
@@ -169,7 +171,8 @@ class MultiAgentEnv(gym.Env, ABC):
 
     def step(
                 self,
-                action: np.ndarray
+                action: np.ndarray,
+                with_team_reward: bool = False,
             ) -> Tuple[Optional[np.ndarray], float, bool, Dict]:
         """
         Run one timestep from the perspective of the ego-agent. This involves
@@ -188,15 +191,27 @@ class MultiAgentEnv(gym.Env, ABC):
             info: Extra information about the environment
         """
         ego_rew = 0.0
+        ego_env_rew = 0.0
+        partner_env_rew = 0.0
+        team_env_rew = 0.0
+
+
         all_actions = []
         initial_obs = self._obs
+        partner_action_distribution = None
+        ego_action_distribution = None
         while True:
-            acts, partner_influence_rew = self._get_actions(self._players, self._obs, action)
+            acts, partner_influence_rew, cand_partner_action_distribution = self._get_actions(self._players, self._obs, action)
             all_actions.append(acts)
             # print("acts", acts)
+            if self._players != self.ego_ind:
+                partner_action_distribution = cand_partner_action_distribution
+            else:
+                ego_action_distribution = cand_partner_action_distribution
 
-
-            self._players, self._obs, rews, done, info = self.n_step(acts)
+            # pdb.set_trace()
+            # print(f"acting player = {self._players}, ")
+            self._players, self._obs, rews, done, info, action_success = self.n_step(acts)
             # print("taken_actions", taken_actions)
             info['_partnerid'] = self.partnerids
 
@@ -205,14 +220,33 @@ class MultiAgentEnv(gym.Env, ABC):
             ego_rew += rews[self.ego_ind] if self.ego_moved \
                 else self.total_rews[self.ego_ind]
 
-            ego_rew += partner_influence_rew
+            # get env rewards
+            # if self._players == self.ego_ind:
+            #     ego_env_rew += rews[self.ego_ind]
+            #     partner_env_rew += rews[1-self.ego_ind]
 
+            # ego_env_rew += rews[self.ego_ind] if self.ego_moved \
+            #     else self.total_rews[self.ego_ind]
+            # partner_env_rew += rews[1-self.ego_ind] if self.ego_moved \
+            #     else self.total_rews[1-self.ego_ind]
+            # team_env_rew += rews[self.ego_ind] + rews[1-self.ego_ind] if self.ego_moved \
+            #     else self.total_rews[self.ego_ind] + self.total_rews[1-self.ego_ind]
+
+            ego_rew += partner_influence_rew
+            # print("rews", rews)
             self.ego_moved = True
 
             if done:
-                ego_obs = self._obs[self._players.index(self.ego_ind)]
-                ego_obs_for_influence = np.concatenate(([ego_obs.item()], [acts[self.ego_ind].item()]), axis=0)
-                return self._old_ego_obs, ego_obs_for_influence, ego_rew, done, info, all_actions
+                # ego_obs = self._obs[self._players.index(self.ego_ind)]
+                ego_obs_for_influence = None
+                # ego_obs_for_influence = np.concatenate(([ego_obs.item()], [acts[self.ego_ind].item()]), axis=0)
+                return_reward = ego_rew
+                if with_team_reward:
+                    return_reward = (
+                    self.total_rews[self.ego_ind], self.total_rews[1 - self.ego_ind], sum(self.total_rews))
+                    # return_reward = (ego_env_rew, partner_env_rew, ego_env_rew+partner_env_rew)
+
+                return self._old_ego_obs, ego_obs_for_influence, return_reward, done, info, all_actions, partner_action_distribution, ego_action_distribution, action_success
 
             if self.ego_ind in self._players:
                 break
@@ -221,12 +255,19 @@ class MultiAgentEnv(gym.Env, ABC):
         # ego_obs_of_self = self._obs[self.ego_ind]
 
         ego_obs = self._obs[self._players.index(self.ego_ind)]
-        ego_obs_for_influence = np.concatenate(([ego_obs.item()], [acts[self.ego_ind].item()]), axis=0)
+        # pdb.set_trace()
+        # ego_obs_for_influence = np.concatenate(([ego_obs.item()], [acts[self.ego_ind].item()]), axis=0)
+        ego_obs_for_influence = None
         # print(f"ego_obs_of_partner = {self._players.index(self.ego_ind)}, ego_obs_of_Self = {self.ego_ind}. ego_obs = {ego_obs}, initial_obs = {initial_obs}")
 
         self._old_ego_obs = ego_obs
         # print("all_actions", all_actions)
-        return ego_obs, ego_obs_for_influence, ego_rew, done, info, all_actions
+        return_reward = ego_rew
+        if with_team_reward:
+            return_reward = (self.total_rews[self.ego_ind], self.total_rews[1-self.ego_ind], sum(self.total_rews))
+            # return_reward = (ego_env_rew, partner_env_rew, ego_env_rew+partner_env_rew)
+
+        return ego_obs, ego_obs_for_influence, return_reward, done, info, all_actions, partner_action_distribution, ego_action_distribution, action_success
 
     def reset(self) -> np.ndarray:
         """
@@ -242,7 +283,7 @@ class MultiAgentEnv(gym.Env, ABC):
         self.ego_moved = False
 
         while self.ego_ind not in self._players:
-            acts = self._get_actions(self._players, self._obs)
+            acts, _ = self._get_actions(self._players, self._obs)
             self._players, self._obs, rews, done, _ = self.n_step(acts)
 
             if done:

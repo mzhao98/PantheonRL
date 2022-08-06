@@ -2,6 +2,8 @@ import pdb
 
 from stable_baselines3.ppo import CnnPolicy
 from stable_baselines3.influence_ppo import CnnPolicy, MlpPolicy, InfluencePolicy
+from stable_baselines3.common.policies import ActorCriticCnnPolicy, ActorCriticPolicy, BasePolicy, MultiInputActorCriticPolicy
+
 from stable_baselines3 import PPO
 from stable_baselines3 import INFLUENCE_PPO
 from pettingzoo.classic import rps_v2
@@ -177,38 +179,6 @@ class HumanLSTM(nn.Module):
 
         return out
 
-# class HumanLSTM(nn.Module):
-#
-#     def __init__(self, num_classes, input_size, hidden_size, num_layers):
-#         super(HumanLSTM, self).__init__()
-#
-#         self.num_classes = num_classes
-#         self.num_layers = num_layers
-#         self.input_size = input_size
-#         self.hidden_size = hidden_size
-#         # self.seq_length = seq_length
-#
-#         self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size,
-#                             num_layers=num_layers, batch_first=True)
-#
-#         self.fc = nn.Linear(hidden_size, num_classes)
-#
-#     def forward(self, x):
-#         pdb.set_trace()
-#         h_0 = Variable(torch.zeros(
-#             self.num_layers, x.size(0), self.hidden_size))
-#
-#         c_0 = Variable(torch.zeros(
-#             self.num_layers, x.size(0), self.hidden_size))
-#
-#         # Propagate input through LSTM
-#         ula, (h_out, _) = self.lstm(x, (h_0, c_0))
-#
-#         h_out = h_out.view(-1, self.hidden_size)
-#
-#         out = self.fc(h_out)
-#
-#         return out
 
 class EgoRPSAgent():
     def __init__(self, env):
@@ -440,6 +410,8 @@ def run_test(ego, env, num_episodes, render=False):
     action_distribution_ego = {0:0, 1:0, 2:0, 3:0}
     action_distribution_partner = {0: 0, 1: 0, 2: 0, 3: 0}
 
+    partner_obs = None
+
     for game in range(num_episodes):
         game_results[game] = {'observations':[], 'rewards':[], 'actions':[], 'dones':[]}
         obs = env.reset()
@@ -448,12 +420,12 @@ def run_test(ego, env, num_episodes, render=False):
         if render:
             env.render()
         while not done:
-            action = ego.get_action(obs, False)
+            action, _ = ego.get_action(obs, False)
             # print("Ego action", number_to_action[action])
             output = env.step(action)
             # print("output", output)
-            obs, _, newreward, done, info, all_actions = output
-
+            obs, _, newreward, done, info, all_actions, partner_action_distr = output
+            # print(f"parnter obs: {partner_obs}, partner_action_distr: {partner_action_distr} ")
             # print("done", done)
             player_actions = number_to_action[all_actions[0][0]], number_to_action[all_actions[1][0]]
             # print(f"player_actions: {player_actions}: ",(all_actions[0][0], all_actions[1][0]))
@@ -464,6 +436,7 @@ def run_test(ego, env, num_episodes, render=False):
             # print("player_actions", player_actions)
             # print("obs", type(obs))
             new_obs = number_to_action[obs.item()]
+            partner_obs = action
             # print("new_obs", new_obs)
             # print()
 
@@ -524,6 +497,8 @@ def train(game_name):
 
     partner_prediction_accuracies = []
 
+    over_time_partner_action_distribution = {}
+
     for ep in range(num_prediction_epochs):
         ego_ppo.set_partner_model(ego_agent.partner_model)
 
@@ -541,10 +516,10 @@ def train(game_name):
         for i in range(len(partners)):
             partners[i].model.save(f"saved_models/{game_name}_partner_{i}")
 
-        partner_prediction_accuracy = test_trained_partner_model(game_name, num_episodes=10)
+        partner_prediction_accuracy, partner_action_distribution = test_trained_partner_model(game_name, num_episodes=10)
         print(f'episode {ep}: partner_prediction_accuracy = {partner_prediction_accuracy}')
         partner_prediction_accuracies.append(partner_prediction_accuracy)
-
+        over_time_partner_action_distribution[ep] = partner_action_distribution
 
         # for rollout_data in ego_ppo.rollout_buffer.get(ego_ppo.batch_size):
         #     actions = rollout_data.actions
@@ -558,6 +533,8 @@ def train(game_name):
     plt.title(f'{game_name}: Partner Prediction Accuracy')
     plt.savefig(f'images/{game_name}_partner_pred_acc.png')
     plt.close()
+
+    return over_time_partner_action_distribution
 
 
 def plot_action_distribution(game_name, action_distribution_ego, action_distribution_partner):
@@ -654,7 +631,9 @@ def test_trained_partner_model(game_name, num_episodes=10):
     total_correct_predictions = 0
     total_predictions_made = 0
 
+    partner_obs = None
 
+    partner_action_distribution = {0: [], 1:[], 2:[]}
     render = False
     game_history = []
     for game in range(num_episodes):
@@ -665,13 +644,16 @@ def test_trained_partner_model(game_name, num_episodes=10):
         if render:
             env.render()
         while not done:
-            action = ego.get_action(obs, False)
+            action, _ = ego.get_action(obs, False)
             # print("Ego action", number_to_action[action])
             output = env.step(action)
             # print("output", output)
-            obs, _, newreward, done, info, all_actions = output
+            obs, _, newreward, done, info, all_actions, partner_action_distr = output
 
             # print(f"obs: {obs}, newreward: {newreward}, all_actions: {all_actions}")
+            partner_action_distr = partner_action_distr[0]
+            if partner_obs is not None:
+                partner_action_distribution[partner_obs] = partner_action_distr
 
 
             # print("done", done)
@@ -708,6 +690,7 @@ def test_trained_partner_model(game_name, num_episodes=10):
             # print("player_actions", player_actions)
             # print("obs", type(obs))
             new_obs = number_to_action[obs.item()]
+            partner_obs = action
             # print("new_obs", new_obs)
             # print()
 
@@ -740,18 +723,20 @@ def test_trained_partner_model(game_name, num_episodes=10):
           f"total correct {total_correct_predictions} out of {total_predictions_made}")
 
     prediction_accuracy = total_correct_predictions/total_predictions_made
-    return prediction_accuracy
+    return prediction_accuracy, partner_action_distribution
 
 
 if __name__ == '__main__':
-    game = 'rps_gamma=5_guide_only_frac_guide_influence_exp1_lstm'
+    game = 'rps_gamma=5_guide_only_reward_influence_exp0_(testing_stochastic)_lstm'
     print(f"Running Experiment: {game}")
 
     # test_trained_partner_model(game, num_episodes=10)
 
-    train(game)
+    over_time_partner_action_distribution = train(game)
+    print("over_time_partner_action_distribution", over_time_partner_action_distribution)
     #
     # n_games = 10
+    # game = 'rps_gamma=5_guide_only_frac_guide_influence_exp1_lstm'
     game_results = test(game, n_games=100)
 
 

@@ -26,7 +26,7 @@ class PettingZooAECWrapper(MultiAgentEnv):
         # self.observation_space = ego agent's obs space
         obs_space = base_env.observation_space(ego_agent)
         if isinstance(obs_space, spaces.Dict):
-            obs_space = obs_space.spaces['observation']
+            obs_space = obs_space.spaces['curr_obs']
         self.observation_space = obs_space
         self._action_mask = None
 
@@ -34,7 +34,7 @@ class PettingZooAECWrapper(MultiAgentEnv):
         agent = self.base_env.possible_agents[player_ind]
         ospace = self.base_env.observation_space(agent)
         if isinstance(ospace, spaces.Dict):
-            ospace = ospace.spaces['observation']
+            ospace = ospace.spaces['curr_obs']
         aspace = self.base_env.action_space(agent)
         return DummyEnv(ospace, aspace)
 
@@ -78,12 +78,16 @@ class PettingZooAECWrapper(MultiAgentEnv):
         # observation of one agent is the previous state of the other
         # observe(player 0) gives the previous state of player 1
         obs = self.base_env.observe(agent)
+        # pdb.set_trace()
+        action_successful = [self.base_env.infos[title]['successful_action'] for title in ['player_1', 'player_2']]
+        # partner_action = self.base_env.get_partner_action(agent)
 
         if isinstance(obs, dict):
-            self._action_mask = obs['action_mask']
-            obs = obs['observation']
+            # self._action_mask = obs['action_mask']
+            obs = obs['curr_obs']
 
         rewards = [0] * self.n_players
+        # action_successful = list(player_action_successful.values())
 
         # print("self.base_env.rewards.items()", self.base_env.rewards.items())
         for key, val in self.base_env.rewards.items():
@@ -91,7 +95,10 @@ class PettingZooAECWrapper(MultiAgentEnv):
 
         done = all(self.base_env.dones.values())
         info = self.base_env.infos[self.base_env.possible_agents[self.ego_ind]]
-        return (agent_idx,), (obs,), tuple(rewards), done, info
+
+        # both_actions = self.base_env.selected_actions
+
+        return (agent_idx,), (obs,), tuple(rewards), done, info, tuple(action_successful)
 
     def n_reset(self) -> Tuple[Tuple[int, ...],
                                Tuple[Optional[np.ndarray], ...]]:
@@ -111,8 +118,8 @@ class PettingZooAECWrapper(MultiAgentEnv):
         obs = self.base_env.observe(agent)
 
         if isinstance(obs, dict):
-            self._action_mask = obs['action_mask']
-            obs = obs['observation']
+            # self._action_mask = obs['action_mask']
+            obs = obs['curr_obs']
 
         self.agent_counts = [0] * self.n_players
         return (agent_idx,), (obs,)

@@ -71,12 +71,12 @@ class StaticPolicyAgent(Agent):
         """
         number_to_action = {0: 'Rock', 1: 'Paper', 2: 'Scissors', 3: 'None'}
 
-        actions, values, log_probs = action_from_policy(obs, self.policy)
+        actions, values, log_probs, action_distribution = action_from_policy(obs, self.policy)
 
         # print(f"ego agent actions: {number_to_action[actions[0]]}, given obs {number_to_action[obs.item()]}")
         # print(f"ego agent values: {values}, given obs {number_to_action[obs.item()]}")
         # print(f"ego agent log_probs: {log_probs}, given obs {number_to_action[obs.item()]}")
-        return clip_actions(actions, self.policy)[0]
+        return clip_actions(actions, self.policy)[0], action_distribution
 
     def update(self, reward: float, done: bool) -> None:
         """
@@ -99,8 +99,10 @@ class OnPolicyAgent(Agent):
                  model: OnPolicyAlgorithm,
                  log_interval=None,
                  tensorboard_log=None,
-                 tb_log_name="OnPolicyAgent"):
+                 tb_log_name="OnPolicyAgent",
+                 total_timesteps=0):
         self.model = model
+        # print("model: ", model)
         self._last_episode_starts = [True]
         self.n_steps = 0
         self.values: th.Tensor = th.empty(0)
@@ -165,7 +167,7 @@ class OnPolicyAgent(Agent):
 
         resample_noise(self.model, self.n_steps)
 
-        actions, values, log_probs = action_from_policy(obs, self.model.policy)
+        actions, values, log_probs, action_distribution = action_from_policy(obs, self.model.policy)
 
         # modify the rollout buffer with newest info
         if record:
@@ -188,7 +190,7 @@ class OnPolicyAgent(Agent):
         self.num_timesteps += 1
         self.values = values
         # print("values", self.values)
-        return clip_actions(actions, self.model)[0]
+        return clip_actions(actions, self.model)[0], action_distribution
 
     def update(self, reward: float, done: bool) -> None:
         """

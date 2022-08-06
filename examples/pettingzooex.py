@@ -9,7 +9,9 @@ via `pip install "pettingzoo[classic]"`
 You can also swap out tictactoe_v3 with some other classic environment
 """
 
-from pettingzoo.classic import tictactoe_v3 as e
+# from pettingzoo.classic import tictactoe_v3 as e
+# from pettingzoo.butterfly import cooperative_pong_v5 as e
+from influence_experiments.influence_envs import collaborative_particle_v0 as e
 
 from stable_baselines3 import PPO
 

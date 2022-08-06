@@ -78,9 +78,9 @@ def action_from_policy(
     with th.no_grad():
         # Convert to pytorch tensor or to TensorDict
         obs_tensor = obs_as_tensor(obs, policy.device)
-        actions, values, log_probs = policy.forward(obs_tensor)
+        actions, values, log_probs, action_distribution = policy.forward(obs_tensor)
 
-    return actions.cpu().numpy(), values, log_probs
+    return actions.cpu().numpy(), values, log_probs, action_distribution.cpu().numpy()
 
 
 def clip_actions(
