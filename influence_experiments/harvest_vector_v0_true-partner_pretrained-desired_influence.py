@@ -44,7 +44,7 @@ from pantheonrl.envs.rpsgym.rps import RPSEnv, RPSWeightedAgent
 from pantheonrl.envs.blockworldgym import simpleblockworld, blockworld
 from pantheonrl.envs.liargym.liar import LiarEnv, LiarDefaultAgent
 
-from overcookedgym.overcooked_utils import LAYOUT_LIST
+# from overcookedgym.overcooked_utils import LAYOUT_LIST
 
 import numpy as np
 
@@ -1369,7 +1369,7 @@ def sigmoid(x):
   return 1 / (1 + np.exp(-x))
 
 def transform_influence_reward(env_reward, mi_divergence, mi_guiding_divergence, episode):
-    alpha = 1
+    alpha = 0.5
     beta = 10
     gamma = 20
     # episode_scale = sigmoid(13-episode)
@@ -1392,7 +1392,7 @@ def return_env_reward(env_reward, mi_divergence, mi_guiding_divergence, episode)
 
 if __name__ == '__main__':
     # game = 'collab-particle-v2_env-div-rew_influence_exp8_lstm'
-    game = 'harvest_vector_v0_truepartner_pretrained-desired-exp9_params-15iters_pretrain-influence_repeat1'
+    game = 'harvest_vector_v0_truepartner_pretrained-desired-exp9_params-15iters_pretrain-influence_variable-iters'
     print(f"Running Experiment: {game}")
 
     # Create folder for experiment data
@@ -1416,7 +1416,7 @@ if __name__ == '__main__':
         # 'desired_strategy': [0.05, 0.05, 0.05, 0.05, 0.0, 0.8, 0.0],
         'desired_strategy': 'experiment_results_aug6/harvest_vector_v0_exp6_ideal_baseline_2onpolicy_15iters_rew-env_repeat3',
         'num_iterations_per_ep': 50000,
-        'num_interaction_episodes': 15,
+        'num_interaction_episodes': 5,
         'num_test_games': 10,
         'action_to_one_hot': {0: [1, 0, 0, 0, 0, 0], 1: [0, 1, 0, 0, 0, 0], 2: [0, 0, 1, 0, 0, 0], 3: [0, 0, 0, 1, 0, 0],
                               4: [0, 0, 0, 0, 1, 0], 5: [0, 0, 0, 0, 0, 1]},
@@ -1443,6 +1443,7 @@ if __name__ == '__main__':
     _, _, ego_agent = pretrain_w_desired(game_params)
 
     game_params['transform_influence_reward'] = transform_influence_reward
+    game_params['num_interaction_episodes'] = 15
     with open(f'{game}/experiment_parameters.pickle', 'wb') as handle:
         pickle.dump(game_params, handle, protocol=pickle.HIGHEST_PROTOCOL)
 

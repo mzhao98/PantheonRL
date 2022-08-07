@@ -60,11 +60,9 @@ import matplotlib.patches as mpatches
 # import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from torch.autograd import Variable
-
-DEVICE = 'cuda:0'
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 
 
 def generate_video(img, folder):
@@ -174,6 +172,10 @@ class EgoRPSAgent():
 
         self.action_to_one_hot = action_to_one_hot
 
+
+    def load_model_from_saved(self, location):
+        self.ego_model = INFLUENCE_PPO_HARVEST_VECTOR_V1_TRUE_PARTNER_PRETRAINED_DESIRED.load(f'{location}/saved_models/policy')
+
     def add_game_to_train(self, eps_index, game_result):
         self.past_game_data[eps_index] = game_result
         self.eps_index = eps_index
@@ -275,6 +277,12 @@ def generate_ego(env, action_to_one_hot, default_marginal_probability, desired_s
     # ego_agent = OnPolicyAgent(PPO(policy='MlpPolicy', env=env, device=DEVICE, verbose=1))
     return ego_agent
 
+
+def generate_ego_from_saved(env, action_to_one_hot, default_marginal_probability, desired_strategy, partner_params, location):
+    ego_agent = EgoRPSAgent(env, action_to_one_hot, default_marginal_probability, desired_strategy, partner_params)
+    # ego_agent = OnPolicyAgent(PPO(policy='MlpPolicy', env=env, device=DEVICE, verbose=1))
+    ego_agent.load_model_from_saved(location)
+    return ego_agent
 
 def gen_partner(altenv, total_timesteps):
     return OnPolicyAgent(PPO(policy='MlpPolicy', env=altenv, device=DEVICE, verbose=1), total_timesteps)
@@ -530,7 +538,7 @@ def train(game_params):
     return over_time_partner_action_distribution, over_time_ego_action_distribution
 
 # Train Agent
-def train_after_pretrained(ego_agent, game_params):
+def train_after_pretrained(game_params):
     # device = game_params['device']
     game_name = game_params['game_name']
     max_cycles = game_params['max_cycles']
@@ -543,6 +551,7 @@ def train_after_pretrained(ego_agent, game_params):
     default_marginal_probability = game_params['default_marginal_probability']
     partner_params = game_params['partner_params']
     transform_influence_reward = game_params['transform_influence_reward']
+    pretrained_location = game_params['pretrained_location']
 
     desired_partner_ppo = gen_fixed_policy("INFLUENCE_PPO", f'{desired_strategy}/saved_models/policy')
     print(f'desired_partner: {desired_partner_ppo}')
@@ -551,7 +560,7 @@ def train_after_pretrained(ego_agent, game_params):
     print(f"Environment: {env}; Partner env: {altenv}")
 
     # ego agent is passed in as input
-    # ego_agent = generate_ego(env, action_to_one_hot, default_marginal_probability, desired_strategy, partner_params)
+    ego_agent = generate_ego_from_saved(env, action_to_one_hot, default_marginal_probability, desired_strategy, partner_params, pretrained_location)
     ego_ppo = ego_agent.ego_model
     partners = generate_partners(altenv, env, 1, total_timesteps=num_iterations_per_ep)
     ego_ppo.set_true_partner(partners[0].model)
@@ -1391,8 +1400,12 @@ def return_env_reward(env_reward, mi_divergence, mi_guiding_divergence, episode)
 
 
 if __name__ == '__main__':
+    gpu = 0
+    DEVICE = f'cuda:{gpu}'
+    os.environ["CUDA_VISIBLE_DEVICES"] = f"{gpu}"
+
     # game = 'collab-particle-v2_env-div-rew_influence_exp8_lstm'
-    game = 'harvest_vector_v0_truepartner_pretrained-desired-exp9_params-15iters_pretrain-influence_repeat2'
+    game = 'harvest_vector_v0_truepartner_pretrained-desired-exp10_load-influence'
     print(f"Running Experiment: {game}")
 
     # Create folder for experiment data
@@ -1409,11 +1422,12 @@ if __name__ == '__main__':
 
 
     game_params = {
-        'device': 'cuda:0',
-        'transform_influence_reward': return_env_reward,
+        'device': f'cuda:{gpu}',
+        'transform_influence_reward': transform_influence_reward,
         'game_name': game,
         'max_cycles': 50,
         # 'desired_strategy': [0.05, 0.05, 0.05, 0.05, 0.0, 0.8, 0.0],
+        'pretrained_location': 'experiment_results_aug6/harvest_vector_v0_truepartner_pretrained-desired-exp9_params-15iters_pretrain-play-w-desired',
         'desired_strategy': 'experiment_results_aug6/harvest_vector_v0_exp6_ideal_baseline_2onpolicy_15iters_rew-env_repeat3',
         'num_iterations_per_ep': 50000,
         'num_interaction_episodes': 15,
@@ -1435,19 +1449,11 @@ if __name__ == '__main__':
         'rewards': '''env rew'''
     }
 
-    # with open(f'{game}/experiment_parameters.json', 'w') as fp:
-    #     json.dump(game_params, fp)
-
-
-
-    _, _, ego_agent = pretrain_w_desired(game_params)
-
-    game_params['transform_influence_reward'] = transform_influence_reward
     with open(f'{game}/experiment_parameters.pickle', 'wb') as handle:
         pickle.dump(game_params, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-    over_time_partner_action_distribution, over_time_ego_action_distribution = train_after_pretrained(ego_agent, game_params)
+    over_time_partner_action_distribution, over_time_ego_action_distribution = train_after_pretrained(game_params)
 
     # print("Saving Over Time Action Distributions......")
     with open(f'{game}/training_history/over_time_partner_action_distribution.pickle', 'wb') as handle:
