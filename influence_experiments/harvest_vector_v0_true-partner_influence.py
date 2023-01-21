@@ -43,7 +43,6 @@ from pantheonrl.envs.rpsgym.rps import RPSEnv, RPSWeightedAgent
 from pantheonrl.envs.blockworldgym import simpleblockworld, blockworld
 from pantheonrl.envs.liargym.liar import LiarEnv, LiarDefaultAgent
 
-from overcookedgym.overcooked_utils import LAYOUT_LIST
 
 import numpy as np
 
@@ -54,16 +53,14 @@ import torch.nn as nn
 import torch.optim as optim
 # import numpy as np
 import matplotlib
-import matplotlib.patches as mpatches
+import matplotlib.patches as patches
 # matplotlib.use('Agg')
 # import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-DEVICE = 'cuda:0'
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 
 def generate_video(img, folder):
@@ -349,14 +346,16 @@ def run_test(ego, env, max_cyles, num_episodes, number_to_action, render=False):
             output = env.step(action)
             # print("env")
             # print("output", output)
-            obs, _, newreward, done, info, all_actions, partner_action_distr, _ = output
+            obs, _, newreward, done, info, all_actions, partner_action_distr, _, action_successful = output
             # print(f"initial obs: {initial_obs}, actions: {all_actions} ")
             # print("done", done)
             player_actions = number_to_action[all_actions[0][0]], number_to_action[all_actions[1][0]]
             # print(f"player_actions: {player_actions}: ",(all_actions[0][0], all_actions[1][0]))
 
-            action_distribution_ego[all_actions[0][0]] += 1
-            action_distribution_partner[all_actions[1][0]] += 1
+            if action_successful[0]:
+                action_distribution_ego[all_actions[0][0]] += 1
+            if action_successful[1]:
+                action_distribution_partner[all_actions[1][0]] += 1
 
             # print("player_actions", player_actions)
             # print("obs", type(obs))
@@ -436,14 +435,21 @@ def train(game_params):
     all_game_partner_rewards = []
     all_game_team_rewards = []
 
+    all_game_ego_rewards_std = []
+    all_game_partner_rewards_std = []
+    all_game_team_rewards_std = []
+
     for ep in range(num_interaction_episodes):
         ego_ppo.set_partner_model(ego_agent.partner_model, transform_influence_reward, DEVICE)
 
         ego_ppo.set_episode_instance(ep)
         ego_ppo.learn(total_timesteps=num_iterations_per_ep)
         ego_ppo.save(f'{game_name}/saved_models/policy')
-        print("Checkpoint 1/3: Save Ego PPO Policy")
+        print("Checkpoint 1/5: Save Ego PPO Policy")
 
+        os.makedirs(f'{game}/saved_models/ep{ep}')
+        ego_ppo.save(f'{game_name}/saved_models/ep{ep}/policy')
+        print("Checkpoint 2/5: Save Ego PPO Policy at Episode Checkpoint")
         # print('all_game_data_by_ep', ego_ppo.all_game_data_by_ep)
         # episode_data = ego_ppo.all_game_data_by_ep[ep]
         # ego_agent.add_game_to_train(ep, episode_data)
@@ -451,63 +457,84 @@ def train(game_params):
         # ego_agent.train_partner_model()
 
         # torch.save(ego_agent.partner_model.state_dict(), f'{game_name}/saved_models/partner_model')
-        print("Checkpoint 2/3: Update EGO with TRUE Partner Model")
+        print("Checkpoint 3/5: Update EGO with TRUE Partner Model")
         ego_ppo.set_true_partner(partners[0].model)
 
         for i in range(len(partners)):
             partners[i].model.save(f"{game_name}/saved_models/partner_{i}")
-        print("Checkpoint 3/3: Save True PPO Partner Models")
+        print("Checkpoint 4/5: Save True PPO Partner Models")
+
+        for i in range(len(partners)):
+            partners[i].model.save(f'{game_name}/saved_models/ep{ep}/partner_{i}')
+        print("Checkpoint 5/5: Save Ego PPO Policy at Episode Checkpoint")
 
         print("\n\n\nTesting Human Prediction LSTM..........")
         partner_prediction_accuracy, partner_action_distribution, ego_action_distribution, game_ego_rewards, game_partner_rewards, game_team_rewards = \
             test_games(game_name, partner_params, action_to_one_hot, max_cycles, num_test_games, number_to_action)
 
-        # print(f'episode {ep}: partner_prediction_accuracy = {partner_prediction_accuracy}')
-        print("partner_action_distr", partner_action_distribution)
-        print("ego_action_distribution", ego_action_distribution)
 
         # partner_prediction_accuracies.append(partner_prediction_accuracy)
         over_time_partner_action_distribution[ep] = partner_action_distribution
         over_time_ego_action_distribution[ep] = ego_action_distribution
+
         all_game_ego_rewards.append(np.mean(game_ego_rewards))
         all_game_partner_rewards.append(np.mean(game_partner_rewards))
         all_game_team_rewards.append(np.mean(game_team_rewards))
 
-    # plt.plot(range(num_interaction_episodes), partner_prediction_accuracies)
-    # plt.xlabel("Epoch")
-    # plt.ylabel("Partner Prediction Accuracy")
-    # plt.title(f'{game_name}: Partner Prediction Accuracy')
-    # plt.savefig(f'{game_name}/images/partner_pred_acc.png')
-    # plt.close()
+        all_game_ego_rewards_std.append(np.std(game_ego_rewards))
+        all_game_partner_rewards_std.append(np.std(game_partner_rewards))
+        all_game_team_rewards_std.append(np.std(game_team_rewards))
 
-    plt.plot(range(num_interaction_episodes), all_game_ego_rewards)
-    plt.plot(range(num_interaction_episodes), all_game_partner_rewards)
-    plt.plot(range(num_interaction_episodes), all_game_team_rewards)
-    plt.legend(['ego', 'partner', 'team'])
+        print(f"\n\n\nEpisode {ep} test results..........")
+        print(f"avg ego reward: {np.mean(game_ego_rewards)}")
+        print(f"avg partner reward: {np.mean(game_partner_rewards)}")
+        print(f"avg team reward: {np.mean(game_team_rewards)}")
+
+    plt.plot(range(num_interaction_episodes), all_game_ego_rewards, color='#0047AB')
+    plt.fill_between(range(num_interaction_episodes),
+                     np.array(all_game_ego_rewards) - np.array(all_game_ego_rewards_std),
+                     np.array(all_game_ego_rewards) + np.array(all_game_ego_rewards_std),
+                     alpha=0.5, edgecolor='#0047AB', facecolor='#89CFF0', linewidth=0)
+
+    plt.plot(range(num_interaction_episodes), all_game_partner_rewards, color='#008000')
+    plt.fill_between(range(num_interaction_episodes),
+                     np.array(all_game_partner_rewards) - np.array(all_game_partner_rewards_std),
+                     np.array(all_game_partner_rewards) + np.array(all_game_partner_rewards_std),
+                     alpha=0.5, edgecolor='#008000', facecolor='#90EE90', linewidth=0)
+
+    plt.plot(range(num_interaction_episodes), all_game_team_rewards, color='#800020')
+    plt.fill_between(range(num_interaction_episodes),
+                     np.array(all_game_team_rewards) - np.array(all_game_team_rewards_std),
+                     np.array(all_game_team_rewards) + np.array(all_game_team_rewards_std),
+                     alpha=0.5, edgecolor='#800020', facecolor='#FAA0A0', linewidth=0)
+
+    # plt.legend(['ego', 'partner', 'team'])
+
+    blue_patch = patches.Patch(color='#0047AB', label='ego')
+    green_patch = patches.Patch(color='#008000', label='partner')
+    red_patch = patches.Patch(color='#800020', label='team')
+
+    plt.legend(handles=[green_patch, blue_patch, red_patch])
+
     plt.xlabel("Epoch")
     plt.ylabel("Game Rewards")
     plt.title(f'{game_name}: Game Rewards')
     plt.savefig(f'{game_name}/images/game_rewards.png')
     plt.close()
 
-    plt.plot(range(num_interaction_episodes), all_game_ego_rewards)
-    plt.plot(range(num_interaction_episodes), all_game_partner_rewards)
-    plt.plot(range(num_interaction_episodes), all_game_team_rewards)
-    plt.legend(['ego', 'partner', 'team'])
-    plt.xlabel("Epoch")
-    plt.ylabel("Game Rewards")
-    max_y = max([max(all_game_team_rewards), max(all_game_ego_rewards), max(all_game_partner_rewards)])
-    plt.ylim(-1, max_y + 2)
-    plt.title(f'{game_name}: Game Rewards')
-    plt.savefig(f'{game_name}/images/game_rewards_0tomax.png')
-    plt.close()
-
-    with open(f'{game}/training_history/all_game_ego_rewards.pickle', 'wb') as handle:
+    with open(f'{game_name}/training_history/all_game_ego_rewards.pickle', 'wb') as handle:
         pickle.dump(all_game_ego_rewards, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{game}/training_history/all_game_partner_rewards.pickle', 'wb') as handle:
+    with open(f'{game_name}/training_history/all_game_partner_rewards.pickle', 'wb') as handle:
         pickle.dump(all_game_partner_rewards, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{game}/training_history/all_game_team_rewards.pickle', 'wb') as handle:
+    with open(f'{game_name}/training_history/all_game_team_rewards.pickle', 'wb') as handle:
         pickle.dump(all_game_team_rewards, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    with open(f'{game_name}/training_history/all_game_ego_rewards_std.pickle', 'wb') as handle:
+        pickle.dump(all_game_ego_rewards_std, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(f'{game_name}/training_history/all_game_partner_rewards_std.pickle', 'wb') as handle:
+        pickle.dump(all_game_partner_rewards_std, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(f'{game_name}/training_history/all_game_team_rewards_std.pickle', 'wb') as handle:
+        pickle.dump(all_game_team_rewards_std, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     return over_time_partner_action_distribution, over_time_ego_action_distribution
 
@@ -956,21 +983,37 @@ def plot_over_time_distribution_as_time_series(game, over_time_distribution, num
         #     text_file.write(str(observation))
 
 
-def transform_influence_reward(env_reward, mi_divergence, mi_guiding_divergence):
+def transform_influence_reward(env_reward, mi_divergence, mi_guiding_divergence, episode):
     alpha = 1
-    beta = 10
-    gamma = 20
-    # final_reward = alpha * env_reward + beta * mi_divergence - gamma * mi_guiding_divergence
+    beta = 5
+    gamma = 5
+    # episode_scale = sigmoid(13-episode)
+    # episode_scale = sigmoid(episode-8)
+    # episode_scale = 1
+    # episode_scale = 2*np.sin(episode/10) # sin(x/10)
+    # episode_scale =  np.exp(-(episode - 15) ** 2 / (30))
+    # episode_scale = np.exp(-(episode - 20) ** 2 / (50))
+    total_timesteps = 15
+    beta = (beta/total_timesteps) * episode
+    gamma = (gamma / total_timesteps) * episode
+
+    final_reward = alpha * env_reward + beta * mi_divergence - gamma * mi_guiding_divergence
+    # final_reward = alpha * env_reward + episode_scale * (beta * mi_divergence - gamma * mi_guiding_divergence)
     # final_reward = alpha * env_reward - gamma * mi_guiding_divergence
-    final_reward = alpha * env_reward + beta * mi_divergence
-    # final_reward = beta * mi_divergence
+    # final_reward = alpha * env_reward + beta * mi_divergence
+    # final_reward = - gamma * mi_guiding_divergence
     # final_reward = env_reward
     return final_reward
 
 
 if __name__ == '__main__':
+    gpu = 0
+    visible_gpu = 1
+    DEVICE = f'cuda:{gpu}'
+    os.environ["CUDA_VISIBLE_DEVICES"] = f"{visible_gpu}"
+
     # game = 'collab-particle-v2_env-div-rew_influence_exp8_lstm'
-    game = 'harvest_vector_v0_truepartner_exp5_beta10_15iters_rew-env-inf'
+    game = 'harvest_vector_v0_truepartner_exp11_15iters_lin-incr'
     print(f"Running Experiment: {game}")
 
     # Create folder for experiment data
@@ -993,15 +1036,15 @@ if __name__ == '__main__':
     #         desired_strategy_as_str[str(key_tuple)] = desired_strategy[key_tuple]
 
     game_params = {
-        'device': 'cuda:0',
+        'device': f'cuda:{gpu}',
         'transform_influence_reward': transform_influence_reward,
         'game_name': game,
         'max_cycles': 50,
         # 'desired_strategy': [0.05, 0.05, 0.05, 0.05, 0.0, 0.8, 0.0],
         'desired_strategy': [0.25, 0.25, 0.24, 0.24, 0.01, 0.01],
         'num_iterations_per_ep': 10000,
-        'num_interaction_episodes': 10,
-        'num_test_games': 5,
+        'num_interaction_episodes': 15,
+        'num_test_games': 10,
         'action_to_one_hot': {0: [1, 0, 0, 0, 0, 0], 1: [0, 1, 0, 0, 0, 0], 2: [0, 0, 1, 0, 0, 0], 3: [0, 0, 0, 1, 0, 0],
                               4: [0, 0, 0, 0, 1, 0], 5: [0, 0, 0, 0, 0, 1]},
         'default_marginal_probability': [0, 0, 0, 0, 0, 0],
@@ -1015,7 +1058,7 @@ if __name__ == '__main__':
             'num_partner_training_epochs': 1000,
             'train_percent': 0.9,
         },
-        'num_eval_games': 100,
+        'num_eval_games': 10,
         'rewards': '''env rew'''
     }
 
@@ -1027,7 +1070,7 @@ if __name__ == '__main__':
 
     over_time_partner_action_distribution, over_time_ego_action_distribution = train(game_params)
 
-    # print("Saving Over Time Action Distributions......")
+    print("Saving Over Time Action Distributions......")
     with open(f'{game}/training_history/over_time_partner_action_distribution.pickle', 'wb') as handle:
         pickle.dump(over_time_partner_action_distribution, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -1043,13 +1086,13 @@ if __name__ == '__main__':
     # plot_over_time_distribution(game, desired_strategy, over_time_partner_action_distribution, savename=f'partner_distr_over_time')
     # plot_over_time_distribution(game, desired_strategy, over_time_ego_action_distribution, savename=f'ego_distr_over_time')
 
-    number_to_action = game_params['number_to_action']
-    number_to_color = game_params['number_to_color']
-    plot_over_time_distribution_as_time_series(game, over_time_partner_action_distribution, number_to_action,
-                                               number_to_color,
-                                               savename=f'partner_distr_over_time')
-    plot_over_time_distribution_as_time_series(game, over_time_ego_action_distribution, number_to_action,
-                                               number_to_color, savename=f'ego_distr_over_time')
+    # number_to_action = game_params['number_to_action']
+    # number_to_color = game_params['number_to_color']
+    # plot_over_time_distribution_as_time_series(game, over_time_partner_action_distribution, number_to_action,
+    #                                            number_to_color,
+    #                                            savename=f'partner_distr_over_time')
+    # plot_over_time_distribution_as_time_series(game, over_time_ego_action_distribution, number_to_action,
+    #                                            number_to_color, savename=f'ego_distr_over_time')
 
     #
     # n_games = 10

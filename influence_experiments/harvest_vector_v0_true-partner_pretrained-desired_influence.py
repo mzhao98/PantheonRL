@@ -368,9 +368,10 @@ def run_test(ego, env, max_cyles, num_episodes, number_to_action, render=False):
             # print("done", done)
             player_actions = number_to_action[all_actions[0][0]], number_to_action[all_actions[1][0]]
             # print(f"player_actions: {player_actions}: ",(all_actions[0][0], all_actions[1][0]))
-
-            action_distribution_ego[all_actions[0][0]] += 1
-            action_distribution_partner[all_actions[1][0]] += 1
+            if action_success[0]:
+                action_distribution_ego[all_actions[0][0]] += 1
+            if action_success[1]:
+                action_distribution_partner[all_actions[1][0]] += 1
 
             # print("player_actions", player_actions)
             # print("obs", type(obs))

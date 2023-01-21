@@ -174,7 +174,7 @@ class EgoRPSAgent():
 
 
     def load_model_from_saved(self, location):
-        self.ego_model = INFLUENCE_PPO_HARVEST_VECTOR_V1_TRUE_PARTNER_PRETRAINED_DESIRED.load(f'{location}/saved_models/policy')
+        self.ego_model = INFLUENCE_PPO_HARVEST_VECTOR_V1_TRUE_PARTNER_PRETRAINED_DESIRED.load(path=f'{location}/saved_models/policy', env=self.env, device=DEVICE)
 
     def add_game_to_train(self, eps_index, game_result):
         self.past_game_data[eps_index] = game_result
@@ -349,6 +349,9 @@ def run_test(ego, env, max_cyles, num_episodes, number_to_action, render=False):
     action_distribution_ego = {a: 0 for a in range(num_actions)}
     action_distribution_partner = {a: 0 for a in range(num_actions)}
 
+    action_distribution_ego_success = {a: 0 for a in range(num_actions)}
+    action_distribution_partner_success = {a: 0 for a in range(num_actions)}
+
     partner_obs = None
     # render = True
 
@@ -376,6 +379,12 @@ def run_test(ego, env, max_cyles, num_episodes, number_to_action, render=False):
             # print("done", done)
             player_actions = number_to_action[all_actions[0][0]], number_to_action[all_actions[1][0]]
             # print(f"player_actions: {player_actions}: ",(all_actions[0][0], all_actions[1][0]))
+
+            if action_success[0]:
+                action_distribution_ego_success[all_actions[0][0]] += 1
+            if action_success[1]:
+                action_distribution_partner_success[all_actions[1][0]] += 1
+
 
             action_distribution_ego[all_actions[0][0]] += 1
             action_distribution_partner[all_actions[1][0]] += 1
@@ -418,9 +427,17 @@ def run_test(ego, env, max_cyles, num_episodes, number_to_action, render=False):
     normalized_partner_distribution_ego = {k: action_distribution_partner[k] / partner_action_sum for k in
                                            action_distribution_partner}
 
-    print(f"Average Reward: {sum(rewards) * 1.0 / (num_episodes * max_cyles)}")
+    ego_action_sum_success = sum(action_distribution_ego_success.values())
+    partner_action_sum_success = sum(action_distribution_partner_success.values())
+    normalized_action_distribution_ego_success = {k: action_distribution_ego_success[k] / ego_action_sum_success for k in
+                                          action_distribution_ego_success}
+
+    normalized_partner_distribution_ego_success = {k: action_distribution_partner_success[k] / partner_action_sum_success for k in
+                                           action_distribution_partner_success}
+
+    print(f"Average Reward: {sum(rewards) * 1.0 / (num_episodes)}")
     print(f"Standard Deviation: {np.std(rewards)}")
-    return game_results, normalized_action_distribution_ego, normalized_partner_distribution_ego
+    return game_results, normalized_action_distribution_ego, normalized_partner_distribution_ego, normalized_action_distribution_ego_success, normalized_partner_distribution_ego_success
 
 
 # Train Agent
@@ -588,7 +605,11 @@ def train_after_pretrained(game_params):
         ego_ppo.set_episode_instance(ep)
         ego_ppo.learn(total_timesteps=num_iterations_per_ep)
         ego_ppo.save(f'{game_name}/saved_models/policy')
-        print("Checkpoint 1/3: Save Ego PPO Policy")
+        print("Checkpoint 1/5: Save Ego PPO Policy")
+
+        os.makedirs(f'{game_name}/saved_models/ep{ep}')
+        ego_ppo.save(f'{game_name}/saved_models/ep{ep}/policy')
+        print("Checkpoint 2/5: Save Ego PPO Policy at Episode Checkpoint")
 
         # print('all_game_data_by_ep', ego_ppo.all_game_data_by_ep)
         # episode_data = ego_ppo.all_game_data_by_ep[ep]
@@ -597,12 +618,16 @@ def train_after_pretrained(game_params):
         # ego_agent.train_partner_model()
 
         # torch.save(ego_agent.partner_model.state_dict(), f'{game_name}/saved_models/partner_model')
-        print("Checkpoint 2/3: Update EGO with TRUE Partner Model")
+        print("Checkpoint 3/5: Update EGO with TRUE Partner Model")
         ego_ppo.set_true_partner(partners[0].model)
 
         for i in range(len(partners)):
             partners[i].model.save(f"{game_name}/saved_models/partner_{i}")
-        print("Checkpoint 3/3: Save True PPO Partner Models")
+        print("Checkpoint 4/5: Save True PPO Partner Models")
+
+        for i in range(len(partners)):
+            partners[i].model.save(f'{game_name}/saved_models/ep{ep}/partner_{i}')
+        print("Checkpoint 5/5: Save Ego PPO Policy at Episode Checkpoint")
 
         # print("\n\n\nTesting Human Prediction LSTM..........")
         partner_prediction_accuracy, partner_action_distribution, ego_action_distribution, game_ego_rewards, game_partner_rewards, game_team_rewards = \
@@ -623,6 +648,11 @@ def train_after_pretrained(game_params):
         all_game_ego_rewards_std.append(np.std(game_ego_rewards))
         all_game_partner_rewards_std.append(np.std(game_partner_rewards))
         all_game_team_rewards_std.append(np.std(game_team_rewards))
+
+        print(f"\n\n\nEpisode {ep} test results..........")
+        print(f"avg ego reward: {np.mean(game_ego_rewards)}")
+        print(f"avg partner reward: {np.mean(game_partner_rewards)}")
+        print(f"avg team reward: {np.mean(game_team_rewards)}")
 
     # plt.plot(range(num_interaction_episodes), partner_prediction_accuracies)
     # plt.xlabel("Epoch")
@@ -675,12 +705,19 @@ def train_after_pretrained(game_params):
     # plt.savefig(f'{game_name}/images/game_rewards_0tomax.png')
     # plt.close()
 
-    with open(f'{game}/training_history/all_game_ego_rewards.pickle', 'wb') as handle:
+    with open(f'{game_name}/training_history/all_game_ego_rewards.pickle', 'wb') as handle:
         pickle.dump(all_game_ego_rewards, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{game}/training_history/all_game_partner_rewards.pickle', 'wb') as handle:
+    with open(f'{game_name}/training_history/all_game_partner_rewards.pickle', 'wb') as handle:
         pickle.dump(all_game_partner_rewards, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{game}/training_history/all_game_team_rewards.pickle', 'wb') as handle:
+    with open(f'{game_name}/training_history/all_game_team_rewards.pickle', 'wb') as handle:
         pickle.dump(all_game_team_rewards, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    with open(f'{game_name}/training_history/all_game_ego_rewards_std.pickle', 'wb') as handle:
+        pickle.dump(all_game_ego_rewards_std, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(f'{game_name}/training_history/all_game_partner_rewards_std.pickle', 'wb') as handle:
+        pickle.dump(all_game_partner_rewards_std, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(f'{game_name}/training_history/all_game_team_rewards_std.pickle', 'wb') as handle:
+        pickle.dump(all_game_team_rewards_std, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     return over_time_partner_action_distribution, over_time_ego_action_distribution
 
@@ -734,6 +771,10 @@ def pretrain_w_desired(game_params):
         ego_ppo.learn(total_timesteps=num_iterations_per_ep)
         ego_ppo.save(f'{game_name}/saved_models/policy')
         print("Checkpoint 1/3: Save Ego PPO Policy")
+
+        os.makedirs(f'{game_name}/saved_models/ep{ep}')
+        ego_ppo.save(f'{game_name}/saved_models/ep{ep}/policy')
+        print("Checkpoint 2/5: Save Ego PPO Policy at Episode Checkpoint")
 
         # print('all_game_data_by_ep', ego_ppo.all_game_data_by_ep)
         # episode_data = ego_ppo.all_game_data_by_ep[ep]
@@ -808,29 +849,23 @@ def pretrain_w_desired(game_params):
     plt.savefig(f'{game_name}/images/pretraining_game_rewards.png')
     plt.close()
 
-    # plt.plot(range(num_interaction_episodes), all_game_ego_rewards)
-    # plt.plot(range(num_interaction_episodes), all_game_partner_rewards)
-    # plt.plot(range(num_interaction_episodes), all_game_team_rewards)
-    # plt.legend(['ego', 'partner', 'team'])
-    # plt.xlabel("Epoch")
-    # plt.ylabel("Game Rewards")
-    # max_y = max([max(all_game_team_rewards), max(all_game_ego_rewards), max(all_game_partner_rewards)])
-    # plt.ylim(-1, max_y + 2)
-    # plt.title(f'{game_name}: Game Rewards')
-    # plt.savefig(f'{game_name}/images/pretraining_game_rewards_0tomax.png')
-    # plt.close()
-
-    with open(f'{game}/training_history/pretraining_all_game_ego_rewards.pickle', 'wb') as handle:
+    with open(f'{game_name}/training_history/all_game_ego_rewards.pickle', 'wb') as handle:
         pickle.dump(all_game_ego_rewards, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{game}/training_history/pretraining_all_game_partner_rewards.pickle', 'wb') as handle:
+    with open(f'{game_name}/training_history/all_game_partner_rewards.pickle', 'wb') as handle:
         pickle.dump(all_game_partner_rewards, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{game}/training_history/pretraining_all_game_team_rewards.pickle', 'wb') as handle:
+    with open(f'{game_name}/training_history/all_game_team_rewards.pickle', 'wb') as handle:
         pickle.dump(all_game_team_rewards, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    with open(f'{game_name}/training_history/all_game_ego_rewards_std.pickle', 'wb') as handle:
+        pickle.dump(all_game_ego_rewards_std, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(f'{game_name}/training_history/all_game_partner_rewards_std.pickle', 'wb') as handle:
+        pickle.dump(all_game_partner_rewards_std, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(f'{game_name}/training_history/all_game_team_rewards_std.pickle', 'wb') as handle:
+        pickle.dump(all_game_team_rewards_std, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     return over_time_partner_action_distribution, over_time_ego_action_distribution, ego_agent
 
-
-def plot_action_distribution(game_name, action_distribution_ego, action_distribution_partner, number_to_action):
+def plot_action_distribution(game_name, action_distribution_ego, action_distribution_partner, action_distribution_ego_success, action_distribution_partner_success, number_to_action):
     # set width of bar
     barWidth = 0.25
     fig = plt.subplots(figsize=(12, 8))
@@ -845,19 +880,52 @@ def plot_action_distribution(game_name, action_distribution_ego, action_distribu
     # br3 = [x + barWidth for x in br2]
 
     # Make the plot
-    plt.bar(br1, ego_dist, color='r', width=barWidth,
+    plt.bar(br1, ego_dist, color='#0047AB', width=barWidth,
             edgecolor='grey', label='Ego')
-    plt.bar(br2, part_dist, color='g', width=barWidth,
+    plt.bar(br2, part_dist, color='#008000', width=barWidth,
             edgecolor='grey', label='Partner')
 
     # Adding Xticks
-    plt.xlabel('RPD Action', fontweight='bold', fontsize=15)
-    plt.ylabel('Percent of Actions in 150 games', fontweight='bold', fontsize=15)
+    plt.ylim(0, 0.4)
+    plt.xlabel('Harvest Action', fontweight='bold', fontsize=15)
+    plt.ylabel('Percent of Actions in 10 games', fontweight='bold', fontsize=15)
     plt.xticks([r + barWidth for r in range(len(number_to_action))], list(number_to_action.values()))
 
-    plt.title(f"Trial {game_name}: Action Distributions")
+    plt.title(f"Trial {game_name}: Attempted Action Distributions")
     plt.legend()
-    plt.savefig(f'{game_name}/images/TEST_action_distrib.png')
+    plt.savefig(f'{game_name}/images/TEST_action_distrib_attempted.png')
+    plt.close()
+
+
+    # plot again
+    # set width of bar
+    barWidth = 0.25
+    fig = plt.subplots(figsize=(12, 8))
+
+    # set height of bar
+    ego_dist = list(action_distribution_ego_success.values())
+    part_dist = list(action_distribution_partner_success.values())
+
+    # Set position of bar on X axis
+    br1 = np.arange(len(number_to_action))
+    br2 = [x + barWidth for x in br1]
+    # br3 = [x + barWidth for x in br2]
+
+    # Make the plot
+    plt.bar(br1, ego_dist, color='#0047AB', width=barWidth,
+            edgecolor='grey', label='Ego')
+    plt.bar(br2, part_dist, color='#008000', width=barWidth,
+            edgecolor='grey', label='Partner')
+
+    # Adding Xticks
+    plt.ylim(0, 0.4)
+    plt.xlabel('Harvest Action', fontweight='bold', fontsize=15)
+    plt.ylabel('Percent of Actions in 10 games', fontweight='bold', fontsize=15)
+    plt.xticks([r + barWidth for r in range(len(number_to_action))], list(number_to_action.values()))
+
+    plt.title(f"Trial {game_name}: Sucessful Action Distributions")
+    plt.legend()
+    plt.savefig(f'{game_name}/images/TEST_action_distrib_successful.png')
     plt.close()
 
 
@@ -884,18 +952,19 @@ def test(game_params):
 
     # alt = generate_agent(altenv, args.alt, args.alt_config, args.alt_load)
     # alt =
-    alt = gen_fixed("PPO", f'{game_name}/saved_models/partner_{0}')
+    alt = gen_fixed("INFLUENCE_PPO", f'{game_name}/saved_models/policy')
+    # alt = gen_fixed("PPO", f'{game_name}/saved_models/partner_{0}')
     env.add_partner_agent(alt)
     print(f'Alt: {alt}')
 
-    game_results, action_distribution_ego, action_distribution_partner = run_test(ego, env, max_cycles, num_eval_games,
+    game_results, action_distribution_ego, action_distribution_partner, action_distribution_ego_success, action_distribution_partner_success = run_test(ego, env, max_cycles, num_eval_games,
                                                                                   number_to_action, False)
 
     # print("game_results", game_results)
-    print("action_distribution_ego", action_distribution_ego)
-    print("action_distribution_partner", action_distribution_partner)
+    # print("action_distribution_ego", action_distribution_ego)
+    # print("action_distribution_partner", action_distribution_partner)
 
-    plot_action_distribution(game_name, action_distribution_ego, action_distribution_partner, number_to_action)
+    plot_action_distribution(game_name, action_distribution_ego, action_distribution_partner, action_distribution_ego_success, action_distribution_partner_success, number_to_action)
 
     return game_results, action_distribution_ego, action_distribution_partner
 
@@ -1378,16 +1447,23 @@ def sigmoid(x):
   return 1 / (1 + np.exp(-x))
 
 def transform_influence_reward(env_reward, mi_divergence, mi_guiding_divergence, episode):
-    alpha = 1
-    beta = 10
-    gamma = 20
-    # episode_scale = sigmoid(13-episode)
+    alpha = 0
+    beta = 0
+    gamma = 10
+    # episode_scale_decr = sigmoid(13-episode)
+    # episode_scale_incr = sigmoid(episode-13)
     # episode_scale = sigmoid(episode-8)
     # episode_scale = 1
     # episode_scale = 2*np.sin(episode/10) # sin(x/10)
     # episode_scale =  np.exp(-(episode - 15) ** 2 / (30))
     # episode_scale = np.exp(-(episode - 20) ** 2 / (50))
+    # if episode < 4:
     final_reward = alpha * env_reward + beta * mi_divergence - gamma * mi_guiding_divergence
+    # final_reward = alpha * env_reward
+    # else:
+    #     final_reward = alpha * env_reward
+
+    # final_reward = episode_scale_incr * (alpha * env_reward) + episode_scale_decr * (beta * mi_divergence - gamma * mi_guiding_divergence)
     # final_reward = alpha * env_reward + episode_scale * (beta * mi_divergence - gamma * mi_guiding_divergence)
     # final_reward = alpha * env_reward - gamma * mi_guiding_divergence
     # final_reward = alpha * env_reward + beta * mi_divergence
@@ -1399,13 +1475,132 @@ def return_env_reward(env_reward, mi_divergence, mi_guiding_divergence, episode)
     return env_reward
 
 
-if __name__ == '__main__':
+def replot_game_rewards(game_name):
+    # game_name = 'harvest_vector_v0_truepartner_pretrained-desired-exp10_load-influence_checkpt-save_15iters-inf-rep1'
+    print(f"Running Experiment: {game_name}")
+
+    with open(f'{game_name}/training_history/all_game_ego_rewards.pickle', 'rb') as handle:
+        all_game_ego_rewards = pickle.load(handle)
+
+    with open(f'{game_name}/training_history/all_game_partner_rewards.pickle', 'rb') as handle:
+        all_game_partner_rewards = pickle.load(handle)
+
+    with open(f'{game_name}/training_history/all_game_team_rewards.pickle', 'rb') as handle:
+        all_game_team_rewards = pickle.load(handle)
+
+    with open(f'{game_name}/training_history/all_game_ego_rewards_std.pickle', 'rb') as handle:
+        all_game_ego_rewards_std = pickle.load(handle)
+
+    with open(f'{game_name}/training_history/all_game_partner_rewards_std.pickle', 'rb') as handle:
+        all_game_partner_rewards_std = pickle.load(handle)
+
+    with open(f'{game_name}/training_history/all_game_team_rewards_std.pickle', 'rb') as handle:
+        all_game_team_rewards_std = pickle.load(handle)
+
+    last = -0
+    all_game_ego_rewards = all_game_ego_rewards[last:]
+    all_game_partner_rewards = all_game_partner_rewards[last:]
+    all_game_team_rewards = all_game_team_rewards[last:]
+
+    all_game_ego_rewards_std = all_game_ego_rewards_std[last:]
+    all_game_partner_rewards_std = all_game_partner_rewards_std[last:]
+    all_game_team_rewards_std = all_game_team_rewards_std[last:]
+
+    num_interaction_episodes = np.arange(15)[last:]
+
+    plt.plot(num_interaction_episodes, all_game_ego_rewards, color='#0047AB')
+    plt.fill_between(num_interaction_episodes,
+                     np.array(all_game_ego_rewards) - np.array(all_game_ego_rewards_std),
+                     np.array(all_game_ego_rewards) + np.array(all_game_ego_rewards_std),
+                     alpha=0.5, edgecolor='#0047AB', facecolor='#89CFF0', linewidth=0)
+
+    plt.plot(num_interaction_episodes, all_game_partner_rewards, color='#008000')
+    plt.fill_between(num_interaction_episodes,
+                     np.array(all_game_partner_rewards) - np.array(all_game_partner_rewards_std),
+                     np.array(all_game_partner_rewards) + np.array(all_game_partner_rewards_std),
+                     alpha=0.5, edgecolor='#008000', facecolor='#90EE90', linewidth=0)
+
+    plt.plot(num_interaction_episodes, all_game_team_rewards, color='#800020')
+    plt.fill_between(num_interaction_episodes,
+                     np.array(all_game_team_rewards) - np.array(all_game_team_rewards_std),
+                     np.array(all_game_team_rewards) + np.array(all_game_team_rewards_std),
+                     alpha=0.5, edgecolor='#800020', facecolor='#FAA0A0', linewidth=0)
+
+    # plt.legend(['ego', 'partner', 'team'])
+
+    blue_patch = patches.Patch(color='#0047AB', label='ego')
+    green_patch = patches.Patch(color='#008000', label='partner')
+    red_patch = patches.Patch(color='#800020', label='team')
+
+    plt.legend(handles=[green_patch, blue_patch, red_patch])
+
+    # plt.ylim(-20,60)
+    plt.xlabel("Epoch")
+    plt.ylabel("Game Rewards")
+    plt.title(f'{game_name}: Game Rewards')
+    plt.savefig(f'{game_name}/images/full_game_rewards.png')
+    plt.close()
+
+def plot_exp():
+# if __name__ == '__main__':
+    # game = 'harvest_vector_v0_truepartner_pretrained-desired-exp10_load-influence_checkpt-save_15iters-env-only'
+    game = 'harvest_vector_v0_truepartner_pretrained-desired-exp10_load-influence_checkpt-save_15iters-1-10-10'
+    game = 'experiment_results_aug6/harvest_vector_v0_exp6_ideal_baseline_2onpolicy_15iters_rew-env_repeat3'
     gpu = 0
+    # game = 'experiment_results_aug6/harvest_vector_v0_truepartner_pretrained-desired-exp9_params-15iters_pretrain-play-w-desired'
+    game = 'experiment_results_aug6/harvest_vector_v0_truepartner_pretrained-desired-exp9_params-15iters_pretrain-play-w-desired'
+    # game = 'experiment_results_aug6/harvest_vector_v0_exp6_ideal_baseline_2onpolicy_15iters_rew-env_repeat1'
+    # game = 'harvest_vector_v0_truepartner_exp10_15iters_env-rew-baseline'
+    game_params = {
+        'device': f'cuda:{gpu}',
+        'transform_influence_reward': transform_influence_reward,
+        'game_name': game,
+        'max_cycles': 50,
+        # 'desired_strategy': [0.05, 0.05, 0.05, 0.05, 0.0, 0.8, 0.0],
+        'pretrained_location': 'experiment_results_aug6/harvest_vector_v0_truepartner_pretrained-desired-exp9_params-15iters_pretrain-play-w-desired',
+        'desired_strategy': 'experiment_results_aug6/harvest_vector_v0_exp6_ideal_baseline_2onpolicy_15iters_rew-env_repeat3',
+        'num_iterations_per_ep': 50000,
+        'num_interaction_episodes': 25,
+        'num_test_games': 10,
+        'action_to_one_hot': {0: [1, 0, 0, 0, 0, 0], 1: [0, 1, 0, 0, 0, 0], 2: [0, 0, 1, 0, 0, 0],
+                              3: [0, 0, 0, 1, 0, 0],
+                              4: [0, 0, 0, 0, 1, 0], 5: [0, 0, 0, 0, 0, 1]},
+        'default_marginal_probability': [0, 0, 0, 0, 0, 0],
+        'number_to_action': {0: 'N', 1: 'S', 2: 'E', 3: 'W', 4: 'Consume', 5: 'Shoot'},
+        'number_to_color': {0: 'r', 1: 'g', 2: 'b', 3: 'm', 4: 'k', 5: 'y'},
+        'partner_params': {
+            'learning_rate': 0.01,
+            'input_size': 60,
+            'hidden_size': 128,
+            'num_layers': 1,
+            'num_partner_training_epochs': 1000,
+            'train_percent': 0.9,
+        },
+        'num_eval_games': 10,
+        'rewards': '''env rew'''
+    }
+
+    # replot_game_rewards(game)
+    game_results = test(game_params)
+
+
+
+def pre_train_ego_w_desired():
+
+    gpu = 0
+    visible_gpu = 0
     DEVICE = f'cuda:{gpu}'
-    os.environ["CUDA_VISIBLE_DEVICES"] = f"{gpu}"
+    os.environ["CUDA_VISIBLE_DEVICES"] = f"{visible_gpu}"
+
+    # np_seed = np.random.randint(10000, size=1)[0]
+    # torch_seed = np.random.randint(10000, size=1)[0]
+    np_seed = 0
+    torch_seed = 0
+    np.random.seed(np_seed)
+    torch.manual_seed(torch_seed)
 
     # game = 'collab-particle-v2_env-div-rew_influence_exp8_lstm'
-    game = 'harvest_vector_v0_truepartner_pretrained-desired-exp10_load-influence'
+    game = 'harvest_vector_v0_truepartner_pretrained-ego-w-desired_seed0_repeat2'
     print(f"Running Experiment: {game}")
 
     # Create folder for experiment data
@@ -1420,19 +1615,21 @@ if __name__ == '__main__':
         os.makedirs(f'{game}/training_history')
         print(f"Created folder for experiment: {game}")
 
-
     game_params = {
+        'np_seed': np_seed,
+        'torch_seed': torch_seed,
         'device': f'cuda:{gpu}',
-        'transform_influence_reward': transform_influence_reward,
+        'transform_influence_reward': return_env_reward,
         'game_name': game,
         'max_cycles': 50,
         # 'desired_strategy': [0.05, 0.05, 0.05, 0.05, 0.0, 0.8, 0.0],
         'pretrained_location': 'experiment_results_aug6/harvest_vector_v0_truepartner_pretrained-desired-exp9_params-15iters_pretrain-play-w-desired',
         'desired_strategy': 'experiment_results_aug6/harvest_vector_v0_exp6_ideal_baseline_2onpolicy_15iters_rew-env_repeat3',
-        'num_iterations_per_ep': 50000,
+        'num_iterations_per_ep': 10000,
         'num_interaction_episodes': 15,
         'num_test_games': 10,
-        'action_to_one_hot': {0: [1, 0, 0, 0, 0, 0], 1: [0, 1, 0, 0, 0, 0], 2: [0, 0, 1, 0, 0, 0], 3: [0, 0, 0, 1, 0, 0],
+        'action_to_one_hot': {0: [1, 0, 0, 0, 0, 0], 1: [0, 1, 0, 0, 0, 0], 2: [0, 0, 1, 0, 0, 0],
+                              3: [0, 0, 0, 1, 0, 0],
                               4: [0, 0, 0, 0, 1, 0], 5: [0, 0, 0, 0, 0, 1]},
         'default_marginal_probability': [0, 0, 0, 0, 0, 0],
         'number_to_action': {0: 'N', 1: 'S', 2: 'E', 3: 'W', 4: 'Consume', 5: 'Shoot'},
@@ -1452,8 +1649,8 @@ if __name__ == '__main__':
     with open(f'{game}/experiment_parameters.pickle', 'wb') as handle:
         pickle.dump(game_params, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-
-    over_time_partner_action_distribution, over_time_ego_action_distribution = train_after_pretrained(game_params)
+    over_time_partner_action_distribution, over_time_ego_action_distribution, ego_agent = pretrain_w_desired(
+        game_params)
 
     # print("Saving Over Time Action Distributions......")
     with open(f'{game}/training_history/over_time_partner_action_distribution.pickle', 'wb') as handle:
@@ -1462,27 +1659,120 @@ if __name__ == '__main__':
     with open(f'{game}/training_history/over_time_ego_action_distribution.pickle', 'wb') as handle:
         pickle.dump(over_time_ego_action_distribution, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-    # with open(f'{game}/training_history/over_time_partner_action_distribution.pickle', 'rb') as handle:
-    #     over_time_partner_action_distribution = pickle.load(handle)
-    #
-    # with open(f'{game}/training_history/over_time_ego_action_distribution.pickle', 'rb') as handle:
-    #     over_time_ego_action_distribution = pickle.load(handle)
+    number_to_action = game_params['number_to_action']
+    number_to_color = game_params['number_to_color']
+    plot_over_time_distribution_as_time_series(game, over_time_partner_action_distribution, number_to_action,
+                                               number_to_color,
+                                               savename=f'partner_distr_over_time')
+    plot_over_time_distribution_as_time_series(game, over_time_ego_action_distribution, number_to_action,
+                                               number_to_color, savename=f'ego_distr_over_time')
 
-    # plot_over_time_distribution(game, desired_strategy, over_time_partner_action_distribution, savename=f'partner_distr_over_time')
-    # plot_over_time_distribution(game, desired_strategy, over_time_ego_action_distribution, savename=f'ego_distr_over_time')
 
-    # number_to_action = game_params['number_to_action']
-    # number_to_color = game_params['number_to_color']
-    # plot_over_time_distribution_as_time_series(game, over_time_partner_action_distribution, number_to_action,
-    #                                            number_to_color,
-    #                                            savename=f'partner_distr_over_time')
-    # plot_over_time_distribution_as_time_series(game, over_time_ego_action_distribution, number_to_action,
-    #                                            number_to_color, savename=f'ego_distr_over_time')
-
-    #
-    # n_games = 10
-    # game = 'rps_gamma=5_guide_only_frac_guide_influence_exp1_lstm'
     game_results = test(game_params)
-
+    replot_game_rewards(game)
     print(f"Done Running Experiment: {game}")
+
+
+if __name__ == '__main__':
+
+    np_seed_list = np.random.randint(100000, size=100)
+    torch_seed_list = np.random.randint(100000, size=100)
+
+    for repeat_no in range(1, 50):
+        print(f"repeat_no = {repeat_no}")
+
+        gpu = 0
+        visible_gpu = 1
+        DEVICE = f'cuda:{gpu}'
+        os.environ["CUDA_VISIBLE_DEVICES"] = f"{visible_gpu}"
+
+        np_seed = np_seed_list[repeat_no]
+        torch_seed = torch_seed_list[repeat_no]
+        np.random.seed(np_seed)
+        torch.manual_seed(torch_seed)
+
+
+        # game = 'collab-particle-v2_env-div-rew_influence_exp8_lstm'
+        game = f'harvest_vector_v0_truepartner_pretrained-desired-exp11_og-15iters-0-0-10_kl-abs_seeds-{np_seed}-{torch_seed}_repeat{repeat_no}'
+        print(f"Running Experiment: {game}")
+
+        # Create folder for experiment data
+        if not os.path.exists(game):
+            # Create a new directory because it does not exist
+            os.makedirs(game)
+
+            # Create a saved models and images directory
+            os.makedirs(f'{game}/saved_models')
+            os.makedirs(f'{game}/images')
+            os.makedirs(f'{game}/images/observations')
+            os.makedirs(f'{game}/training_history')
+            print(f"Created folder for experiment: {game}")
+
+
+        game_params = {
+            'np_seed': np_seed,
+            'torch_seed': torch_seed,
+            'device': f'cuda:{gpu}',
+            'transform_influence_reward': transform_influence_reward,
+            'game_name': game,
+            'max_cycles': 50,
+            # 'desired_strategy': [0.05, 0.05, 0.05, 0.05, 0.0, 0.8, 0.0],
+            'pretrained_location': 'experiment_results_aug6/harvest_vector_v0_truepartner_pretrained-desired-exp9_params-15iters_pretrain-play-w-desired',
+            'desired_strategy': 'experiment_results_aug6/harvest_vector_v0_exp6_ideal_baseline_2onpolicy_15iters_rew-env_repeat3',
+            'num_iterations_per_ep': 20000,
+            'num_interaction_episodes': 15,
+            'num_test_games': 10,
+            'action_to_one_hot': {0: [1, 0, 0, 0, 0, 0], 1: [0, 1, 0, 0, 0, 0], 2: [0, 0, 1, 0, 0, 0], 3: [0, 0, 0, 1, 0, 0],
+                                  4: [0, 0, 0, 0, 1, 0], 5: [0, 0, 0, 0, 0, 1]},
+            'default_marginal_probability': [0, 0, 0, 0, 0, 0],
+            'number_to_action': {0: 'N', 1: 'S', 2: 'E', 3: 'W', 4: 'Consume', 5: 'Shoot'},
+            'number_to_color': {0: 'r', 1: 'g', 2: 'b', 3: 'm', 4: 'k', 5: 'y'},
+            'partner_params': {
+                'learning_rate': 0.01,
+                'input_size': 60,
+                'hidden_size': 128,
+                'num_layers': 1,
+                'num_partner_training_epochs': 1000,
+                'train_percent': 0.9,
+            },
+            'num_eval_games': 3,
+            'rewards': '''env rew'''
+        }
+
+        with open(f'{game}/experiment_parameters.pickle', 'wb') as handle:
+            pickle.dump(game_params, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+        over_time_partner_action_distribution, over_time_ego_action_distribution = train_after_pretrained(game_params)
+
+        # print("Saving Over Time Action Distributions......")
+        with open(f'{game}/training_history/over_time_partner_action_distribution.pickle', 'wb') as handle:
+            pickle.dump(over_time_partner_action_distribution, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+        with open(f'{game}/training_history/over_time_ego_action_distribution.pickle', 'wb') as handle:
+            pickle.dump(over_time_ego_action_distribution, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+        # with open(f'{game}/training_history/over_time_partner_action_distribution.pickle', 'rb') as handle:
+        #     over_time_partner_action_distribution = pickle.load(handle)
+        #
+        # with open(f'{game}/training_history/over_time_ego_action_distribution.pickle', 'rb') as handle:
+        #     over_time_ego_action_distribution = pickle.load(handle)
+
+        # plot_over_time_distribution(game, desired_strategy, over_time_partner_action_distribution, savename=f'partner_distr_over_time')
+        # plot_over_time_distribution(game, desired_strategy, over_time_ego_action_distribution, savename=f'ego_distr_over_time')
+
+        # number_to_action = game_params['number_to_action']
+        # number_to_color = game_params['number_to_color']
+        # plot_over_time_distribution_as_time_series(game, over_time_partner_action_distribution, number_to_action,
+        #                                            number_to_color,
+        #                                            savename=f'partner_distr_over_time')
+        # plot_over_time_distribution_as_time_series(game, over_time_ego_action_distribution, number_to_action,
+        #                                            number_to_color, savename=f'ego_distr_over_time')
+        #
+        # #
+        # # n_games = 10
+        # # game = 'rps_gamma=5_guide_only_frac_guide_influence_exp1_lstm'
+        # game_results = test(game_params)
+        # replot_game_rewards(game)
+        print(f"Done Running Experiment: {game}")
 
