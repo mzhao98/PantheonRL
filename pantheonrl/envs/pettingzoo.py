@@ -41,6 +41,7 @@ class PettingZooAECWrapper(MultiAgentEnv):
     def n_step(
                     self,
                     actions: List[np.ndarray],
+                    display: bool = False,
                 ) -> Tuple[Tuple[int, ...],
                            Tuple[Optional[np.ndarray], ...],
                            Tuple[float, ...],
@@ -79,7 +80,7 @@ class PettingZooAECWrapper(MultiAgentEnv):
         # observe(player 0) gives the previous state of player 1
         obs = self.base_env.observe(agent)
         # pdb.set_trace()
-        action_successful = [self.base_env.infos[title]['successful_action'] for title in ['player_1', 'player_2']]
+        # action_successful = [self.base_env.infos[title]['successful_action'] for title in ['player_1', 'player_2']]
         # partner_action = self.base_env.get_partner_action(agent)
 
         if isinstance(obs, dict):
@@ -98,7 +99,7 @@ class PettingZooAECWrapper(MultiAgentEnv):
 
         # both_actions = self.base_env.selected_actions
 
-        return (agent_idx,), (obs,), tuple(rewards), done, info, tuple(action_successful)
+        return (agent_idx,), (obs,), tuple(rewards), done, info
 
     def n_reset(self) -> Tuple[Tuple[int, ...],
                                Tuple[Optional[np.ndarray], ...]]:

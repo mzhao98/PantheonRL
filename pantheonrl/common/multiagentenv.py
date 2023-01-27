@@ -172,6 +172,7 @@ class MultiAgentEnv(gym.Env, ABC):
     def step(
                 self,
                 action: np.ndarray,
+                display: bool = False,
                 with_team_reward: bool = False,
             ) -> Tuple[Optional[np.ndarray], float, bool, Dict]:
         """
@@ -190,6 +191,9 @@ class MultiAgentEnv(gym.Env, ABC):
             done: Whether the episode has ended (need to call reset() if True)
             info: Extra information about the environment
         """
+        action_success = 0
+
+
         ego_rew = 0.0
         ego_env_rew = 0.0
         partner_env_rew = 0.0
@@ -211,7 +215,7 @@ class MultiAgentEnv(gym.Env, ABC):
 
             # pdb.set_trace()
             # print(f"acting player = {self._players}, ")
-            self._players, self._obs, rews, done, info, action_success = self.n_step(acts)
+            self._players, self._obs, rews, done, info = self.n_step(acts, display)
             # print("taken_actions", taken_actions)
             info['_partnerid'] = self.partnerids
 
@@ -301,6 +305,7 @@ class MultiAgentEnv(gym.Env, ABC):
     def n_step(
                     self,
                     actions: List[np.ndarray],
+                    display: bool = False,
                 ) -> Tuple[Tuple[int, ...],
                            Tuple[Optional[np.ndarray], ...],
                            Tuple[float, ...],
@@ -313,6 +318,7 @@ class MultiAgentEnv(gym.Env, ABC):
 
         This function is called by the `step` function.
 
+        :param display:
         :param actions: List of action provided agents that are acting on this
         step.
 
